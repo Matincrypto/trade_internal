@@ -47,3 +47,18 @@ DATABASE = {
     "password": "YourStrongPassword123!", # <-- IMPORTANT: Replace with the password you created
     "database": "trade_internal"
 }
+# ==============================================================================
+# 6. TELEGRAM BOT CONFIGURATION
+# ==============================================================================
+TELEGRAM = {
+    "BOT_TOKEN": "7435237309:AAEAXXkce1VU8Wk-NqxX1v6VKnSMaydbErs",
+    "CHAT_ID": "-1002964082215"
+}
+
+# Also, let's add the monitor interval to the BOT section
+# Find the BOT section and add the new line to it
+BOT = {
+    "SIGNAL_CHECK_INTERVAL_SECONDS": 60,
+    "ORDER_MANAGEMENT_INTERVAL_SECONDS": 30,
+    "MONITOR_INTERVAL_SECONDS": 300 # Send a telegram update every 5 minutes
+}

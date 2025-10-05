@@ -3,7 +3,7 @@ import time
 import logging
 import mysql.connector
 from datetime import datetime, timedelta
-import pytz  # Library for handling time zones
+import pytz
 
 # Import settings from the config file
 import config
@@ -25,13 +25,11 @@ def cancel_wallex_order(client_order_id):
     """Sends a request to Wallex to cancel an order."""
     url = config.WALLEX_API["BASE_URL"] + config.WALLEX_API["ENDPOINTS"]["ORDERS"]
     headers = {"Content-Type": "application/json", "x-api-key": config.WALLEX_API["API_KEY"]}
-    # The body for a cancel request requires the clientOrderId
     payload = {"clientOrderId": client_order_id}
     
     logging.info(f"Attempting to cancel order {client_order_id} on Wallex...")
     try:
         response = requests.delete(url, headers=headers, json=payload, timeout=15)
-        # Wallex returns 200 for a successful cancellation
         if response.status_code == 200 and response.json().get("success"):
             logging.info(f"Successfully canceled order {client_order_id} on Wallex.")
             return True
@@ -42,18 +40,18 @@ def cancel_wallex_order(client_order_id):
         logging.error(f"An error occurred while canceling order on Wallex: {e}")
         return False
 
-def delete_order_from_db(client_order_id):
-    """Deletes an order record from the database."""
+def update_order_status(client_order_id, new_status):
+    """Updates the status of an order in the database."""
     connection = create_db_connection()
     if not connection: return
     try:
         cursor = connection.cursor()
-        query = "DELETE FROM trading_orders WHERE client_order_id = %s"
-        cursor.execute(query, (client_order_id,))
+        query = "UPDATE trading_orders SET status = %s WHERE client_order_id = %s"
+        cursor.execute(query, (new_status, client_order_id))
         connection.commit()
-        logging.info(f"Successfully deleted order {client_order_id} from the database.")
+        logging.info(f"Successfully updated status for order {client_order_id} to '{new_status}'.")
     except mysql.connector.Error as e:
-        logging.error(f"Failed to delete order {client_order_id} from DB: {e}")
+        logging.error(f"Failed to update status for order {client_order_id} in DB: {e}")
     finally:
         if connection.is_connected():
             cursor.close()
@@ -67,18 +65,16 @@ def cleanup_loop():
     """
     logging.info("Cleanup script started. Looking for stale orders...")
     
-    # Define the Tehran time zone
     tehran_tz = pytz.timezone("Asia/Tehran")
     
     while True:
         connection = create_db_connection()
         if not connection:
-            time.sleep(60) # If DB is down, wait a minute before retrying
+            time.sleep(60)
             continue
 
         try:
             cursor = connection.cursor(dictionary=True)
-            # Get all open buy orders
             query = "SELECT client_order_id, created_at FROM trading_orders WHERE status = 'BUY_ORDER_PLACED'"
             cursor.execute(query)
             open_orders = cursor.fetchall()
@@ -86,24 +82,19 @@ def cleanup_loop():
             if open_orders:
                 logging.info(f"Found {len(open_orders)} open buy orders. Checking their age...")
                 
-                # Get the current time in Tehran
                 now_in_tehran = datetime.now(tehran_tz)
                 
                 for order in open_orders:
-                    # 'created_at' from DB is a naive datetime, assume it's UTC
                     order_time_utc = order['created_at'].replace(tzinfo=pytz.utc)
-                    
-                    # Calculate the age of the order
                     age = now_in_tehran - order_time_utc
                     
-                    # Check if the age is more than 5 minutes (300 seconds)
-                    if age.total_seconds() > 300:
+                    if age.total_seconds() > 300: # 5-minute timeout
                         logging.warning(f"Order {order['client_order_id']} is stale (age: {age}). Starting cancellation process.")
                         
                         # 1. Cancel the order on the exchange
                         if cancel_wallex_order(order['client_order_id']):
-                            # 2. If cancellation was successful, delete from our database
-                            delete_order_from_db(order['client_order_id'])
+                            # 2. If cancellation was successful, UPDATE its status in our database
+                            update_order_status(order['client_order_id'], 'CANCELED_TIMEOUT')
                     else:
                         logging.info(f"Order {order['client_order_id']} is fresh (age: {age}). Skipping.")
             else:
@@ -116,8 +107,7 @@ def cleanup_loop():
                 cursor.close()
                 connection.close()
         
-        # Wait for the next check
-        time.sleep(60) # Check every 60 seconds
+        time.sleep(60)
 
 # --- Start the Script ---
 

@@ -10,7 +10,7 @@ import config
 # Set up basic logging to see the bot's activity
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
 
-# --- Helper Functions (Copied from main.py) ---
+# --- Helper Functions ---
 
 def create_db_connection():
     """Creates a new connection to the MySQL database."""
@@ -87,11 +87,17 @@ def order_management_loop():
                 
                 if wallex_order_status and wallex_order_status.get("status") == 'DONE':
                     logging.info(f"Buy order {client_id} is filled! Placing sell order.")
+                    
+                    # Update status to indicate the buy is filled
                     query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("BUY_ORDER_FILLED", client_id))
                     
+                    # Place the sell order
                     sell_response = place_wallex_order(order["symbol"], order["exit_price"], order["quantity"], "sell")
+                    
+                    # If sell order is placed successfully, mark the entire trade as completed
                     if sell_response:
-                        query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("SELL_ORDER_PLACED", client_id))
+                        logging.info(f"Sell order placed for {client_id}. Marking trade as COMPLETED.")
+                        query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("COMPLETED", client_id))
         else:
             logging.info("No open buy orders to manage.")
 

@@ -62,10 +62,9 @@ BOT = {
     "ORDER_MANAGEMENT_INTERVAL_SECONDS": 30,
     "MONITOR_INTERVAL_SECONDS": 300 # Send a telegram update every 5 minutes
 }
-# Find the BOT section and add the new line
 BOT = {
     "SIGNAL_CHECK_INTERVAL_SECONDS": 60,
     "ORDER_MANAGEMENT_INTERVAL_SECONDS": 30,
-    "MONITOR_INTERVAL_SECONDS": 300, 
-    "ASSET_SYNC_INTERVAL_SECONDS": 600 # Check assets every 10 minutes
+    "MONITOR_INTERVAL_SECONDS": 600, # تغییر از 300 به 600 برای ارسال هر 10 دقیقه
+    "ASSET_SYNC_INTERVAL_SECONDS": 600 
 }

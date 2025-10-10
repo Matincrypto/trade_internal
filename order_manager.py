@@ -41,11 +41,15 @@ def query_db(query, params=None, fetch=None):
             connection.close()
 
 def get_wallex_order_status(client_order_id):
-    """Gets the status of a specific order from Wallex."""
+    """
+    Gets the full details of a specific order from Wallex.
+    This function is used both to check status and to get final details.
+    """
     url = config.WALLEX_API["BASE_URL"] + config.WALLEX_API["ENDPOINTS"]["GET_ORDER"] + client_order_id
     headers = {"x-api-key": config.WALLEX_API["API_KEY"]}
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        # Based on swagger, the response contains the full order resource
         return response.json().get("result") if response.status_code == 200 and response.json().get("success") else None
     except requests.exceptions.RequestException as e:
         logging.error(f"Error getting order status from Wallex: {e}")
@@ -55,16 +59,12 @@ def get_wallex_balances():
     """Fetches all account balances from Wallex and returns a simplified dictionary."""
     url = config.WALLEX_API["BASE_URL"] + config.WALLEX_API["ENDPOINTS"]["ACCOUNT_BALANCES"]
     headers = {"x-api-key": config.WALLEX_API["API_KEY"]}
-    
     logging.info("Fetching account balances from Wallex...")
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200 and response.json().get("success"):
             balances_data = response.json().get("result", {}).get("balances", [])
-            balances_map = {
-                item['asset']: decimal.Decimal(item['available'])
-                for item in balances_data
-            }
+            balances_map = {item['asset']: decimal.Decimal(item['available']) for item in balances_data}
             logging.info(f"Successfully fetched balances for {len(balances_map)} assets.")
             return balances_map
         else:
@@ -103,51 +103,74 @@ def order_management_loop():
     while True:
         logging.info("--- Starting new order management cycle ---")
 
-        # --- STEP 1: Check for newly filled buy orders ---
+        # --- STEP 1: Check for newly filled buy orders and calculate net quantity ---
         open_buy_orders = query_db("SELECT * FROM trading_orders WHERE status = 'BUY_ORDER_PLACED'", fetch='all')
         if open_buy_orders:
-            logging.info(f"[STEP 1] Found {len(open_buy_orders)} open buy order(s) to check status.")
+            logging.info(f"[STEP 1] Found {len(open_buy_orders)} open buy order(s) to check.")
             for order in open_buy_orders:
                 client_id = order["client_order_id"]
-                wallex_order_status = get_wallex_order_status(client_id)
+                # Get the full order details from Wallex
+                wallex_order_details = get_wallex_order_status(client_id)
                 
-                if wallex_order_status and wallex_order_status.get("status") == 'DONE':
-                    logging.info(f"Buy order {client_id} is filled! Updating status to BUY_ORDER_FILLED.")
-                    query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("BUY_ORDER_FILLED", client_id))
+                if wallex_order_details and wallex_order_details.get("status") == 'DONE':
+                    logging.info(f"Buy order {client_id} is filled!")
+                    
+                    # ==============================================================================
+                    # MODIFICATION: Calculate net quantity from the exact fee paid
+                    # ==============================================================================
+                    executed_qty_str = wallex_order_details.get("executedQty", "0")
+                    fee_str = wallex_order_details.get("fee", "0")
+                    
+                    try:
+                        # Convert API string responses to Decimal for precision
+                        executed_qty = decimal.Decimal(executed_qty_str)
+                        fee = decimal.Decimal(fee_str)
+                        
+                        # Calculate the net quantity that actually hit the wallet
+                        net_quantity = executed_qty - fee
+                        
+                        logging.info(f"Order {client_id} - Executed Qty: {executed_qty}, Fee: {fee}, Net Quantity: {net_quantity}")
+
+                        # Update the database with the new status AND the precise net quantity
+                        query_db(
+                            "UPDATE trading_orders SET status = %s, executed_quantity = %s WHERE client_order_id = %s",
+                            ("BUY_ORDER_FILLED", net_quantity, client_id)
+                        )
+                    except (decimal.InvalidOperation, TypeError) as e:
+                        logging.error(f"Could not calculate net quantity for {client_id}. Error: {e}. Raw values: executedQty='{executed_qty_str}', fee='{fee_str}'")
+
         else:
             logging.info("[STEP 1] No open buy orders found.")
 
-        # --- STEP 2: Process filled buys, verify balance, and place sell orders ---
+        # --- STEP 2: Process filled buys and place sell orders using the precise quantity ---
         filled_buy_orders = query_db("SELECT * FROM trading_orders WHERE status = 'BUY_ORDER_FILLED'", fetch='all')
         if filled_buy_orders:
             logging.info(f"[STEP 2] Found {len(filled_buy_orders)} filled order(s) to process for selling.")
             
-            wallex_balances = get_wallex_balances()
-            if wallex_balances is None:
-                logging.warning("Could not fetch Wallex balances. Skipping sell processing for this cycle.")
-            else:
-                for order in filled_buy_orders:
-                    asset = order['asset_name']
-                    required_quantity = order['quantity']
+            for order in filled_buy_orders:
+                # ==============================================================================
+                # MODIFICATION: Use the precise executed_quantity from the database for the sell order
+                # ==============================================================================
+                quantity_to_sell = order.get("executed_quantity")
 
-                    if asset in wallex_balances and wallex_balances[asset] >= required_quantity:
-                        logging.info(f"Asset '{asset}' for order {order['client_order_id']} confirmed in wallet. Placing sell order.")
-                        
-                        sell_response = place_wallex_order(
-                            order["symbol"], 
-                            order["exit_price"], 
-                            order["quantity"], 
-                            "sell"
-                        )
+                if not quantity_to_sell or quantity_to_sell <= 0:
+                    logging.warning(f"Order {order['client_order_id']} has an invalid executed_quantity ({quantity_to_sell}). Skipping.")
+                    continue
 
-                        if sell_response:
-                            logging.info(f"Sell order for {order['client_order_id']} placed. Marking trade as COMPLETED.")
-                            query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("COMPLETED", order['client_order_id']))
-                        else:
-                            logging.error(f"Failed to place sell order for {order['client_order_id']}. Will retry in the next cycle.")
-                    else:
-                        logging.warning(f"Order for asset '{asset}' found as FILLED, but not enough balance in Wallex wallet. Skipping.")
-                        logging.warning(f"DB requires {required_quantity} of {asset}, Wallet has {wallex_balances.get(asset, 0)}.")
+                logging.info(f"Preparing to sell precise quantity of {quantity_to_sell} for {order['symbol']}")
+                
+                sell_response = place_wallex_order(
+                    order["symbol"], 
+                    order["exit_price"], 
+                    quantity_to_sell, 
+                    "sell"
+                )
+
+                if sell_response:
+                    logging.info(f"Sell order for {order['client_order_id']} placed. Marking trade as COMPLETED.")
+                    query_db("UPDATE trading_orders SET status = %s WHERE client_order_id = %s", ("COMPLETED", order['client_order_id']))
+                else:
+                    logging.error(f"Failed to place sell order for {order['client_order_id']}. Will retry in the next cycle.")
         else:
             logging.info("[STEP 2] No filled orders waiting for sell.")
 

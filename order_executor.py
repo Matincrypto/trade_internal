@@ -24,24 +24,36 @@ def process_new_signals():
         try:
             symbol = f"{signal['asset_name']}{config.TRADING['QUOTE_ASSET']}"
             
-            precision = wallex_api.market_precisions.get(symbol)
-            if precision is None:
-                logging.warning(f"قانون دقت اعشار برای نماد '{symbol}' یافت نشد. نمی‌توان سفارش ثبت کرد.")
-                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Precision not found for {symbol}", signal['id']))
+            # --- فیکس جدید: گرفتن هر دو قانون دقت اعشار ---
+            amount_precision = wallex_api.market_amount_precisions.get(symbol)
+            price_precision = wallex_api.market_price_precisions.get(symbol)
+            
+            if amount_precision is None or price_precision is None:
+                logging.warning(f"قوانین دقت اعشار (amount یا price) برای نماد '{symbol}' یافت نشد.")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Precision rules not found for {symbol}", signal['id']))
                 continue
 
-            # استفاده از Decimal برای دقت بالا در محاسبات مالی
-            entry_price = Decimal(signal['entry_price'])
+            # استفاده از Decimal برای دقت بالا
+            entry_price_raw = Decimal(signal['entry_price'])
             trade_amount = Decimal(config.TRADING["TRADE_AMOUNT_TMN"])
             
-            if entry_price <= 0:
+            if entry_price_raw <= 0:
                  logging.error(f"قیمت ورودی نامعتبر (صفر) برای {symbol}. نادیده گرفته شد.")
                  db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = 'Invalid entry price (zero)' WHERE id = %s", (signal['id'],))
                  continue
-                 
-            quantity_to_buy_raw = trade_amount / entry_price
-            formatted_quantity = wallex_api.format_quantity(quantity_to_buy_raw, precision)
             
+            # --- فیکس جدید: گرد کردن قیمت ورودی ---
+            formatted_entry_price = wallex_api.format_price(entry_price_raw, price_precision)
+            logging.info(f"قیمت خرید برای {symbol}: {formatted_entry_price} (خام: {entry_price_raw})")
+
+            if formatted_entry_price <= 0:
+                logging.error(f"قیمت ورودی پس از گرد کردن 0 شد. (خام: {entry_price_raw}).")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = 'Entry price 0 after formatting' WHERE id = %s", (signal['id'],))
+                continue
+
+            # گرد کردن مقدار
+            quantity_to_buy_raw = trade_amount / formatted_entry_price # محاسبه با قیمت گرد شده
+            formatted_quantity = wallex_api.format_quantity(quantity_to_buy_raw, amount_precision)
             logging.info(f"مقدار محاسبه شده برای {symbol}: {formatted_quantity} (خام: {quantity_to_buy_raw})")
 
             if formatted_quantity <= 0:
@@ -49,8 +61,8 @@ def process_new_signals():
                 db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = 'Calculated quantity is zero' WHERE id = %s", (signal['id'],))
                 continue
 
-            # ثبت سفارش خرید در والکس
-            order_response = wallex_api.place_wallex_order(symbol, entry_price, formatted_quantity, "buy")
+            # ثبت سفارش خرید در والکس با قیمت و مقدار گرد شده
+            order_response = wallex_api.place_wallex_order(symbol, formatted_entry_price, formatted_quantity, "buy")
             
             if order_response:
                 client_order_id = order_response.get("result", {}).get("clientOrderId")
@@ -71,7 +83,6 @@ def process_new_signals():
 def check_filled_buys():
     """
     مرحله ۲: سفارشات 'BUY_ORDER_PLACED' را بررسی می‌کند.
-    اگر تکمیل شده باشند، وضعیت را به 'BUY_ORDER_FILLED' تغییر می‌دهد و مقدار خالص را ذخیره می‌کند.
     """
     logging.info("[مرحله ۲] در حال بررسی وضعیت سفارشات خرید ثبت شده...")
     orders = db_utils.query_db("SELECT id, buy_client_order_id FROM trade_signals WHERE status = 'BUY_ORDER_PLACED'", fetch='all')
@@ -132,31 +143,38 @@ def place_sell_orders():
                 continue
 
             symbol = f"{order['asset_name']}{config.TRADING['QUOTE_ASSET']}"
-            exit_price = order['exit_price']
+            exit_price_raw = order['exit_price']
             
-            # ==================================================================
-            # ***!!! فیکس جدید: گرد کردن مقدار فروش بر اساس دقت اعشار !!!***
-            # ==================================================================
-            
-            # ۱. گرفتن دقت اعشار برای این نماد
-            precision = wallex_api.market_precisions.get(symbol)
-            if precision is None:
-                logging.warning(f"قانون دقت اعشار برای {symbol} (جهت فروش) یافت نشد. نادیده گرفته شد.")
-                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Precision not found for {symbol} (sell)", order['id']))
+            # --- فیکس جدید: گرفتن هر دو قانون دقت اعشار ---
+            amount_precision = wallex_api.market_amount_precisions.get(symbol)
+            price_precision = wallex_api.market_price_precisions.get(symbol)
+
+            if amount_precision is None or price_precision is None:
+                logging.warning(f"قوانین دقت اعشار (amount یا price) برای نماد '{symbol}' (جهت فروش) یافت نشد.")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Precision rules not found for {symbol} (sell)", order['id']))
                 continue
                 
-            # ۲. گرد کردن مقدار فروش (با همان تابع format_quantity)
-            formatted_quantity_to_sell = wallex_api.format_quantity(quantity_to_sell_raw, precision)
-            
+            # --- فیکس جدید: گرد کردن مقدار فروش ---
+            formatted_quantity_to_sell = wallex_api.format_quantity(quantity_to_sell_raw, amount_precision)
             logging.info(f"مقدار فروش برای {symbol}: {formatted_quantity_to_sell} (خام: {quantity_to_sell_raw})")
+
+            # --- فیکس جدید: گرد کردن قیمت فروش ---
+            formatted_exit_price = wallex_api.format_price(exit_price_raw, price_precision)
+            logging.info(f"قیمت فروش برای {symbol}: {formatted_exit_price} (خام: {exit_price_raw})")
+
 
             if formatted_quantity_to_sell <= 0:
                 logging.warning(f"مقدار فروش برای {symbol} پس از گرد کردن 0 شد. نادیده گرفته شد.")
                 db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Sell quantity 0 after formatting (raw: {quantity_to_sell_raw})", order['id']))
                 continue
+            
+            if formatted_exit_price <= 0:
+                logging.warning(f"قیمت فروش برای {symbol} پس از گرد کردن 0 شد. نادیده گرفته شد.")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Sell price 0 after formatting (raw: {exit_price_raw})", order['id']))
+                continue
 
-            # ۳. ثبت سفارش فروش با مقدار گرد شده
-            sell_response = wallex_api.place_wallex_order(symbol, exit_price, formatted_quantity_to_sell, "sell")
+            # ثبت سفارش فروش با مقادیر و قیمت‌های گرد شده
+            sell_response = wallex_api.place_wallex_order(symbol, formatted_exit_price, formatted_quantity_to_sell, "sell")
             
             if sell_response:
                 sell_order_id = sell_response.get("result", {}).get("clientOrderId")
@@ -177,7 +195,6 @@ def place_sell_orders():
 def check_filled_sells():
     """
     مرحله ۴: سفارشات 'SELL_ORDER_PLACED' را بررسی می‌کند.
-    اگر تکمیل شده باشند، وضعیت را به 'SELL_ORDER_FILLED' (پایان موفقیت‌آمیز) تغییر می‌دهد.
     """
     logging.info("[مرحله ۴] در حال بررسی وضعیت سفارشات فروش ثبت شده...")
     orders = db_utils.query_db("SELECT id, sell_client_order_id FROM trade_signals WHERE status = 'SELL_ORDER_PLACED'", fetch='all')

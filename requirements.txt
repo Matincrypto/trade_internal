@@ -1,0 +1,4 @@
+# requirements.txt
+requests
+mysql-connector-python
+pytz

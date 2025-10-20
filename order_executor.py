@@ -84,8 +84,12 @@ def check_filled_buys():
         try:
             wallex_order = wallex_api.get_wallex_order_status(order['buy_client_order_id'])
             
-            if wallex_order and wallex_order.get("status") == 'DONE':
-                logging.info(f"سفارش خرید {order['buy_client_order_id']} تکمیل (DONE) شده است!")
+            # ==================================================================
+            # ***!!! فیکس اصلی اینجا اعمال شد !!!***
+            # تغییر از 'DONE' به 'FILLED' بر اساس لاگ‌های شما
+            # ==================================================================
+            if wallex_order and wallex_order.get("status") == 'FILLED':
+                logging.info(f"سفارش خرید {order['buy_client_order_id']} تکمیل (FILLED) شده است!")
                 
                 executed_qty_str = wallex_order.get("executedQty", "0")
                 fee_str = wallex_order.get("fee", "0")
@@ -102,6 +106,9 @@ def check_filled_buys():
                     (net_quantity, fee, order['id'])
                 )
             elif wallex_order:
+                # ==================================================================
+                # ***!!! لاگ دیباگ به حالت تمیز بازگشت !!!***
+                # ==================================================================
                 logging.info(f"سفارش خرید {order['buy_client_order_id']} هنوز باز است (وضعیت: {wallex_order.get('status')}).")
             else:
                 logging.warning(f"اطلاعاتی برای سفارش {order['buy_client_order_id']} از والکس دریافت نشد.")
@@ -168,8 +175,11 @@ def check_filled_sells():
         try:
             wallex_order = wallex_api.get_wallex_order_status(order['sell_client_order_id'])
             
-            if wallex_order and wallex_order.get("status") == 'DONE':
-                logging.info(f"سفارش فروش {order['sell_client_order_id']} تکمیل (DONE) شده است!")
+            # ==================================================================
+            # ***!!! فیکس اصلی اینجا هم اعمال شد (برای فروش) !!!***
+            # ==================================================================
+            if wallex_order and wallex_order.get("status") == 'FILLED':
+                logging.info(f"سفارش فروش {order['sell_client_order_id']} تکمیل (FILLED) شده است!")
                 
                 executed_qty = Decimal(wallex_order.get("executedQty", "0"))
                 fee = Decimal(wallex_order.get("fee", "0"))

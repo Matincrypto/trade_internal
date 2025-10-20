@@ -7,15 +7,15 @@ import config
 from decimal import Decimal
 
 # دیکشنری برای ذخیره قوانین دقت اعشار
-# این متغیر به صورت گلوبال در این ماژول ذخیره می‌شود تا فقط یک بار بارگذاری شود
-market_precisions = {}
+# ما اکنون دو قانون را ذخیره می‌کنیم
+market_amount_precisions = {}
+market_price_precisions = {}
 
 def load_market_precisions():
     """
-    قوانین دقت اعشار (amount_precision) را از والکس بارگذاری کرده 
-    و در متغیر گلوبال market_precisions ذخیره می‌کند.
+    قوانین دقت اعشار (amount_precision و price_precision) را از والکس بارگذاری می‌کند.
     """
-    global market_precisions
+    global market_amount_precisions, market_price_precisions
     logging.info("در حال بارگذاری قوانین دقت اعشار بازارها از والکس...")
     url = config.WALLEX_API["BASE_URL"] + config.WALLEX_API["ENDPOINTS"]["ALL_MARKETS"]
     try:
@@ -24,10 +24,17 @@ def load_market_precisions():
             markets = response.json().get("result", {}).get("markets", [])
             for market in markets:
                 symbol = market.get("symbol")
-                precision = market.get("amount_precision")
-                if symbol and precision is not None:
-                    market_precisions[symbol] = int(precision)
-            logging.info(f"قوانین دقت اعشار برای {len(market_precisions)} بازار با موفقیت بارگذاری شد.")
+                amount_precision = market.get("amount_precision")
+                price_precision = market.get("price_precision") # <-- فیلد جدید
+                
+                if symbol:
+                    if amount_precision is not None:
+                        market_amount_precisions[symbol] = int(amount_precision)
+                    if price_precision is not None:
+                        market_price_precisions[symbol] = int(price_precision)
+                        
+            logging.info(f"قوانین Amount Precision برای {len(market_amount_precisions)} بازار بارگذاری شد.")
+            logging.info(f"قوانین Price Precision برای {len(market_price_precisions)} بازار بارگذاری شد.")
             return True
         else:
             logging.error(f"خطا در بارگذاری قوانین دقت اعشار بازارها. وضعیت: {response.status_code}")
@@ -39,10 +46,21 @@ def load_market_precisions():
 def format_quantity(quantity, precision):
     """
     مقدار (Quantity) را بر اساس دقت اعشار مجاز بازار، به پایین گرد می‌کند (Floor).
-    استفاده از Decimal برای جلوگیری از خطاهای ممیز شناور.
     """
     factor = Decimal(10) ** precision
     return math.floor(Decimal(quantity) * factor) / factor
+
+# ==================================================================
+# ***!!! تابع جدید برای گرد کردن قیمت !!!***
+# ==================================================================
+def format_price(price, precision):
+    """
+    قیمت (Price) را بر اساس دقت اعشار مجاز بازار، به پایین گرد می‌کند (Floor).
+    * ما از Floor استفاده می‌کنیم تا همیشه یک قیمت معتبر (و اغلب بهتر) برای خرید 
+    * و یک قیمت معتبر (کمی محافظه‌کارانه‌تر) برای فروش داشته باشیم.
+    """
+    factor = Decimal(10) ** precision
+    return math.floor(Decimal(price) * factor) / factor
 
 def place_wallex_order(symbol, price, quantity, side):
     """
@@ -59,7 +77,7 @@ def place_wallex_order(symbol, price, quantity, side):
         "type": "limit"
     }
     
-    logging.info(f"در حال ثبت سفارش: {side.upper()} {quantity} {symbol} @ {price}")
+    logging.info(f"در حال ثبت سفارش: {side.UPPER()} {quantity} {symbol} @ {price}")
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=15)
         response_data = response.json()
@@ -99,8 +117,6 @@ def get_wallex_order_status(client_order_id):
 def cancel_wallex_order(client_order_id):
     """
     یک سفارش باز را در والکس با استفاده از client_order_id لغو می‌کند.
-    بر اساس مستندات Swagger، والکس از متد DELETE برای لغو استفاده می‌کند 
-    و clientOrderId را در بدنه (body) JSON انتظار دارد.
     """
     url = config.WALLEX_API["BASE_URL"] + config.WALLEX_API["ENDPOINTS"]["ORDERS"]
     headers = {"Content-Type": "application/json", "x-api-key": config.WALLEX_API["API_KEY"]}

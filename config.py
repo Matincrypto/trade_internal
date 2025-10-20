@@ -39,9 +39,9 @@ TRADING = {
 # 4. BOT SETTINGS
 # ==============================================================================
 BOT = {
-    "SIGNAL_CHECK_INTERVAL_SECONDS": 60,    # بررسی سیگنال جدید هر 60 ثانیه
-    "ORDER_MANAGEMENT_INTERVAL_SECONDS": 30,# بررسی وضعیت سفارشات هر 30 ثانیه
-    "CLEANUP_INTERVAL_SECONDS": 60,         # بررسی سفارشات قدیمی هر 60 ثانیه
+    "SIGNAL_CHECK_INTERVAL_SECONDS": 350,    # بررسی سیگنال جدید هر 60 ثانیه
+    "ORDER_MANAGEMENT_INTERVAL_SECONDS": 5,# بررسی وضعیت سفارشات هر 30 ثانیه
+    "CLEANUP_INTERVAL_SECONDS": 5,         # بررسی سفارشات قدیمی هر 60 ثانیه
     "LOG_LEVEL": logging.INFO,
     "STALE_ORDER_TIMEOUT_MINUTES": 5        # سفارش خرید بعد از 5 دقیقه لغو می‌شود
 }
@@ -54,4 +54,5 @@ DATABASE = {
     "user": "bot_user",
     "password": "YourStrongPassword123!", # <-- IMPORTANT: Replace with your password
     "database": "trade_internal"
+
 }

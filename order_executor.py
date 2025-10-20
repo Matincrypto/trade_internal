@@ -84,10 +84,7 @@ def check_filled_buys():
         try:
             wallex_order = wallex_api.get_wallex_order_status(order['buy_client_order_id'])
             
-            # ==================================================================
-            # ***!!! فیکس اصلی اینجا اعمال شد !!!***
-            # تغییر از 'DONE' به 'FILLED' بر اساس لاگ‌های شما
-            # ==================================================================
+            # فیکس قبلی: تغییر از 'DONE' به 'FILLED'
             if wallex_order and wallex_order.get("status") == 'FILLED':
                 logging.info(f"سفارش خرید {order['buy_client_order_id']} تکمیل (FILLED) شده است!")
                 
@@ -106,9 +103,6 @@ def check_filled_buys():
                     (net_quantity, fee, order['id'])
                 )
             elif wallex_order:
-                # ==================================================================
-                # ***!!! لاگ دیباگ به حالت تمیز بازگشت !!!***
-                # ==================================================================
                 logging.info(f"سفارش خرید {order['buy_client_order_id']} هنوز باز است (وضعیت: {wallex_order.get('status')}).")
             else:
                 logging.warning(f"اطلاعاتی برای سفارش {order['buy_client_order_id']} از والکس دریافت نشد.")
@@ -131,17 +125,38 @@ def place_sell_orders():
 
     for order in orders:
         try:
-            quantity_to_sell = order.get("buy_executed_quantity")
-            if not quantity_to_sell or quantity_to_sell <= 0:
-                logging.error(f"مقدار خالص برای فروش (ID: {order['id']}) نامعتبر است: {quantity_to_sell}")
+            quantity_to_sell_raw = order.get("buy_executed_quantity")
+            if not quantity_to_sell_raw or quantity_to_sell_raw <= 0:
+                logging.error(f"مقدار خالص برای فروش (ID: {order['id']}) نامعتبر است: {quantity_to_sell_raw}")
                 db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = 'Invalid net quantity for selling' WHERE id = %s", (order['id'],))
                 continue
 
             symbol = f"{order['asset_name']}{config.TRADING['QUOTE_ASSET']}"
             exit_price = order['exit_price']
             
-            # ثبت سفارش فروش با مقدار خالص خریداری شده
-            sell_response = wallex_api.place_wallex_order(symbol, exit_price, quantity_to_sell, "sell")
+            # ==================================================================
+            # ***!!! فیکس جدید: گرد کردن مقدار فروش بر اساس دقت اعشار !!!***
+            # ==================================================================
+            
+            # ۱. گرفتن دقت اعشار برای این نماد
+            precision = wallex_api.market_precisions.get(symbol)
+            if precision is None:
+                logging.warning(f"قانون دقت اعشار برای {symbol} (جهت فروش) یافت نشد. نادیده گرفته شد.")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Precision not found for {symbol} (sell)", order['id']))
+                continue
+                
+            # ۲. گرد کردن مقدار فروش (با همان تابع format_quantity)
+            formatted_quantity_to_sell = wallex_api.format_quantity(quantity_to_sell_raw, precision)
+            
+            logging.info(f"مقدار فروش برای {symbol}: {formatted_quantity_to_sell} (خام: {quantity_to_sell_raw})")
+
+            if formatted_quantity_to_sell <= 0:
+                logging.warning(f"مقدار فروش برای {symbol} پس از گرد کردن 0 شد. نادیده گرفته شد.")
+                db_utils.query_db("UPDATE trade_signals SET status = 'ERROR', notes = %s WHERE id = %s", (f"Sell quantity 0 after formatting (raw: {quantity_to_sell_raw})", order['id']))
+                continue
+
+            # ۳. ثبت سفارش فروش با مقدار گرد شده
+            sell_response = wallex_api.place_wallex_order(symbol, exit_price, formatted_quantity_to_sell, "sell")
             
             if sell_response:
                 sell_order_id = sell_response.get("result", {}).get("clientOrderId")
@@ -175,9 +190,7 @@ def check_filled_sells():
         try:
             wallex_order = wallex_api.get_wallex_order_status(order['sell_client_order_id'])
             
-            # ==================================================================
-            # ***!!! فیکس اصلی اینجا هم اعمال شد (برای فروش) !!!***
-            # ==================================================================
+            # فیکس قبلی: تغییر از 'DONE' به 'FILLED'
             if wallex_order and wallex_order.get("status") == 'FILLED':
                 logging.info(f"سفارش فروش {order['sell_client_order_id']} تکمیل (FILLED) شده است!")
                 

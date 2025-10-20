@@ -7,7 +7,6 @@ import config
 from decimal import Decimal
 
 # دیکشنری برای ذخیره قوانین دقت اعشار
-# ما اکنون دو قانون را ذخیره می‌کنیم
 market_amount_precisions = {}
 market_price_precisions = {}
 
@@ -50,14 +49,9 @@ def format_quantity(quantity, precision):
     factor = Decimal(10) ** precision
     return math.floor(Decimal(quantity) * factor) / factor
 
-# ==================================================================
-# ***!!! تابع جدید برای گرد کردن قیمت !!!***
-# ==================================================================
 def format_price(price, precision):
     """
     قیمت (Price) را بر اساس دقت اعشار مجاز بازار، به پایین گرد می‌کند (Floor).
-    * ما از Floor استفاده می‌کنیم تا همیشه یک قیمت معتبر (و اغلب بهتر) برای خرید 
-    * و یک قیمت معتبر (کمی محافظه‌کارانه‌تر) برای فروش داشته باشیم.
     """
     factor = Decimal(10) ** precision
     return math.floor(Decimal(price) * factor) / factor
@@ -77,7 +71,11 @@ def place_wallex_order(symbol, price, quantity, side):
         "type": "limit"
     }
     
-    logging.info(f"در حال ثبت سفارش: {side.UPPER()} {quantity} {symbol} @ {price}")
+    # ==================================================================
+    # ***!!! فیکس نهایی: اصلاح خطای تایپی .UPPER() به .upper() !!!***
+    # ==================================================================
+    logging.info(f"در حال ثبت سفارش: {side.upper()} {quantity} {symbol} @ {price}")
+    
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=15)
         response_data = response.json()
